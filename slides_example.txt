@@ -1,0 +1,50 @@
+[cover]
+eyebrow: Zákon 224/2015
+title: Nejčastější důvod zařazení není výroba. Je to sklad.
+sub: Šest věcí o prevenci závažných havárií, které se v praxi zjišťují až při kontrole.
+
+///
+
+[list]
+eyebrow: Co se přehlíží
+title: Čtyři body, na kterých to obvykle stojí
+- Součtové pravidlo :: Jednotlivé látky prahu nedosáhnou, součet ano.
+- Maximální projektované množství :: Rozhoduje kapacita, nikoliv běžný provozní stav skladu.
+- Odpady a mezisklady :: Do výpočtu vstupují i látky, které nejsou vstupní surovinou.
+- Změna bez nového posouzení :: Nový tank nebo nová receptura mění zařazení objektu.
+
+///
+
+[stat]
+eyebrow: Termín, který se zapomíná
+number: 5 let
+lead: Bezpečnostní zpráva se přezkoumává a aktualizuje nejméně jednou za pět let.
+note: Dříve, pokud se změní provoz, množství látek nebo poznatky o riziku.
+
+///
+
+[compare]
+eyebrow: Zařazení
+title: Skupina A a skupina B
+left: Skupina A
+- Posouzení rizik a bezpečnostní program.
+- Vnitřní havarijní plán se nezpracovává.
+- Bez zóny havarijního plánování.
+right: Skupina B
+- Bezpečnostní zpráva místo programu.
+- Vnitřní havarijní plán povinně.
+- Podklady pro vnější havarijní plán.
+note: Rozdíl v rozsahu dokumentace je zásadní, hranice mezi skupinami často jen v desítkách tun.
+
+///
+
+[table]
+eyebrow: Kdo co předkládá
+title: Dokumentace a lhůty
+cols: Dokument | Skupina | Lhůta
+row: Návrh na zařazení | A i B | 1 měsíc
+row: Posouzení rizik | A i B | 6 měsíců
+row: Bezpečnostní program | A | 6 měsíců
+row: Bezpečnostní zpráva | B | 6 měsíců
+row: Vnitřní havarijní plán | B | 6 měsíců
+note: Lhůty se počítají od zařazení objektu. Hodnoty v tabulce jsou ukázkové, doplňte podle svého případu.
