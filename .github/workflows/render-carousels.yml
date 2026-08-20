@@ -20,7 +20,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install pillow numpy requests
+        run: pip install -r requirements.txt
 
       - name: Render queued carousels
         env:
