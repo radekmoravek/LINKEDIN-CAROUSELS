@@ -1,0 +1,39 @@
+name: Render carousels
+
+on:
+  workflow_dispatch:
+    inputs:
+      page_id:
+        description: "Optional: render one specific Notion page id (leave blank to render everything marked Queued)"
+        required: false
+        default: ""
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install pillow numpy requests
+
+      - name: Render queued carousels
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          CAROUSEL_DB_ID: ${{ secrets.CAROUSEL_DB_ID }}
+          ONLY_PAGE_ID: ${{ inputs.page_id }}
+        run: python render_carousels.py
+
+      - name: Keep the PDFs as a build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: carousels
+          path: out/*.pdf
+          if-no-files-found: ignore
+          retention-days: 30
