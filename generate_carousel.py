@@ -31,7 +31,7 @@ import os
 import sys
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 # ---------------------------------------------------------------- tokens
 
@@ -42,7 +42,8 @@ BG_DARK = (13, 13, 13)          # #0d0d0d
 BG_LIGHT = (243, 242, 242)      # #f3f2f2
 INK = (32, 30, 29)              # #201e1d
 MUTED_INK = (74, 70, 69)        # #4a4645
-ACCENT = (236, 48, 19)          # #ec3013
+ACCENT = (214, 140, 45)         # amber on dark backgrounds
+ACCENT_INK = (168, 96, 16)      # darker amber for the light slides
 ON_DARK = (255, 255, 255)
 ON_DARK_SUB = (220, 217, 215)   # #dcd9d7
 ON_DARK_MUTE = (185, 181, 178)  # #b9b5b2
@@ -70,6 +71,14 @@ SERIF = {400: "SourceSerif4-400.ttf", 600: "SourceSerif4-600.ttf",
          700: "SourceSerif4-700.ttf"}
 SANS = {400: "Archivo-400.ttf", 600: "Archivo-600.ttf",
         800: "Archivo-800.ttf"}
+DISPLAY = "Anton-Regular.ttf"          # story style: condensed heavy caps
+
+# ---- story style ----------------------------------------------------------
+STORY_BG = (12, 12, 12)
+STORY_PAD = 64
+IMAGE_DIR = "images"
+STORY_BRAND = "SOLID SAFETY"
+STORY_ACCENT = (214, 140, 45)   # muted amber, story style only
 
 _font_cache = {}
 
@@ -212,7 +221,7 @@ def circle_portrait(size, object_y=0.22):
     return out
 
 
-def eyebrow(d, y, text, color=ACCENT):
+def eyebrow(d, y, text, color=ACCENT_INK):
     f = sans(25, 800)
     write(d, (PAD, y), text.upper(), f, color, tracking=25 * 0.16)
     return y + 25 + 6
@@ -296,7 +305,7 @@ def render_list(s, index, total):
     for i, item in enumerate(items, start=1):
         head, _, body = item.partition("::")
         y += 36
-        write(d, (PAD, y), f"{i:02d}", f_num, ACCENT)
+        write(d, (PAD, y), f"{i:02d}", f_num, ACCENT_INK)
         col_x = PAD + 76 + 36
         col_w = W - PAD - col_x
         yy = para(d, (col_x, y), head.strip(), f_h3, INK, col_w, int(40 * 1.18))
@@ -338,7 +347,7 @@ def render_stat(s, index, total):
     block = h_num + 32 + h_lead + 32 + 2 + (32 + h_note if note else 0)
 
     y = y0 + 20 + max(0, (top_limit - 40 - (y0 + 20) - block) // 2)
-    write(d, (PAD, y - cap_height(f_num) + int(size * 0.06)), number, f_num, ACCENT, tr_n)
+    write(d, (PAD, y - cap_height(f_num) + int(size * 0.06)), number, f_num, ACCENT_INK, tr_n)
     y += h_num + 32
     y = para(d, (PAD, y), lead, f_lead, INK, 860, int(46 * 1.28))
     y += 32
@@ -379,7 +388,7 @@ def render_compare(s, index, total):
             yy += 26
         return yy - 26 + 44
 
-    bottom = max(column(PAD, "left", MUTED_INK), column(mid + 36, "right", ACCENT))
+    bottom = max(column(PAD, "left", MUTED_INK), column(mid + 36, "right", ACCENT_INK))
     hairline(img, (mid, grid_top, mid, bottom), DIVIDER)
     d.rectangle((PAD, bottom, W - PAD, bottom + 1), fill=INK)
 
@@ -488,8 +497,418 @@ def render_outro(s, index, total):
     return img
 
 
-LAYOUTS = {"cover": render_cover, "list": render_list, "stat": render_stat,
-           "compare": render_compare, "table": render_table, "outro": render_outro}
+# ================================================================ story style
+#
+# Case-study format: one photo per slide, two-tone condensed headline,
+# tick-marked bullets, and a "kicker" pay-off line anchored to the bottom.
+# Accent runs are marked **like this** in any field.
+
+
+def display(size):
+    return _load(DISPLAY, size)
+
+
+def runs(text):
+    """Split **accent** markers into (text, is_accent) runs."""
+    out, buf, accent = [], "", False
+    i = 0
+    while i < len(text):
+        if text[i:i + 2] == "**":
+            if buf:
+                out.append((buf, accent))
+                buf = ""
+            accent = not accent
+            i += 2
+            continue
+        buf += text[i]
+        i += 1
+    if buf:
+        out.append((buf, accent))
+    return out
+
+
+def rich_wrap(d, text, f, max_w, tracking=0.0):
+    """Wrap text that carries accent runs. Returns lines of (word, accent)."""
+    words = []
+    for chunk, accent in runs(text):
+        for word in chunk.split(" "):
+            if word:
+                words.append((word, accent))
+    lines, cur = [], []
+    for word, accent in words:
+        trial = " ".join(w for w, _ in cur + [(word, accent)])
+        if measure(d, trial, f, tracking) <= max_w or not cur:
+            cur.append((word, accent))
+        else:
+            lines.append(cur)
+            cur = [(word, accent)]
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def rich_draw(d, xy, lines, f, base, accent_col, line_h, tracking=0.0):
+    x0, y = xy
+    space = measure(d, " ", f)
+    for line in lines:
+        x = x0
+        for word, accent in line:
+            x = write(d, (x, y), word, f, accent_col if accent else base, tracking)
+            x += space + tracking
+        y += line_h
+    return y
+
+
+def fit_display(d, text, max_w, max_lines, start, minimum, tracking=0.0):
+    size = start
+    while size > minimum:
+        f = display(size)
+        lines = rich_wrap(d, text, f, max_w, tracking)
+        if len(lines) <= max_lines:
+            return f, lines
+        size -= 3
+    f = display(minimum)
+    return f, rich_wrap(d, text, f, max_w, tracking)
+
+
+def grain(img, strength=16):
+    """Light film grain so the flat panel doesn't look like a PDF export."""
+    arr = np.asarray(img.convert("RGB")).astype(np.int16)
+    noise = np.random.default_rng(4).normal(0, strength, arr.shape[:2])[..., None]
+    arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+    return Image.fromarray(arr).convert("RGBA")
+
+
+def story_bg(image_name):
+    """Photo on the right, dark panel on the left, soft blend between."""
+    path = None
+    for candidate in (os.path.join(IMAGE_DIR, image_name) if image_name else None,
+                      image_name, asset(BG_IMAGE)):
+        if candidate and os.path.exists(candidate):
+            path = candidate
+            break
+
+    base = Image.new("RGB", (W, H), STORY_BG)
+    if path:
+        img = Image.open(path).convert("RGB")
+        ratio = max(W / img.width, H / img.height)
+        if ratio > 2:
+            # low-res source: step up gradually and re-sharpen between steps,
+            # which holds edges far better than one big LANCZOS jump
+            w0, h0 = img.size
+            step = 1.0
+            while step < ratio:
+                step = min(step * 1.7, ratio)
+                img = img.resize((max(1, int(w0 * step)), max(1, int(h0 * step))),
+                                 Image.LANCZOS)
+                img = img.filter(ImageFilter.UnsharpMask(radius=1.6, percent=70,
+                                                         threshold=2))
+        scale = max(W / img.width, H / img.height)
+        img = img.resize((max(W, int(img.width * scale)),
+                          max(H, int(img.height * scale))), Image.LANCZOS)
+        img = img.filter(ImageFilter.UnsharpMask(radius=1.3, percent=120, threshold=3))
+        left = (img.width - W) // 2
+        top = (img.height - H) // 2
+        base = img.crop((left, top, left + W, top + H))
+        base = ImageEnhance.Color(base).enhance(0.42)
+        base = ImageEnhance.Brightness(base).enhance(1.02)
+        base = ImageEnhance.Contrast(base).enhance(1.06)
+
+    xs = np.arange(W)[None, :] / W
+    alpha = np.clip((0.70 - xs) / 0.30, 0, 1) ** 0.90 * 0.94
+    alpha = np.repeat(alpha, H, axis=0)
+
+    ys = np.arange(H)[:, None] / H
+    alpha = np.clip(alpha + np.clip((ys - 0.82) / 0.18, 0, 1) * 0.28, 0, 1)
+
+    arr = np.asarray(base).astype(np.float32)
+    ink = np.array(STORY_BG, dtype=np.float32)
+    out = arr * (1 - alpha[..., None]) + ink * alpha[..., None]
+    return grain(Image.fromarray(out.astype(np.uint8)))
+
+
+def story_counter(d, index, total):
+    f = sans(30, 800)
+    x = write(d, (STORY_PAD, STORY_PAD), f"{index:02d}", f, STORY_ACCENT)
+    write(d, (x + 2, STORY_PAD), f"/{total:02d}", f, (150, 148, 146))
+    d.rectangle((STORY_PAD, STORY_PAD + 52, STORY_PAD + 92, STORY_PAD + 55), fill=STORY_ACCENT)
+    return STORY_PAD + 55
+
+
+def bullets_height(d, items, col_w, size):
+    f = sans(size, 400)
+    lh = int(size * 1.28)
+    return sum(len(rich_wrap(d, it, f, col_w - 34)) * lh + 22 for it in items)
+
+
+def story_bullets(d, y, items, col_w, avail=None, size=34):
+    """Shrink the body type if the bullets would run into the kicker."""
+    if avail is not None:
+        while size > 24 and bullets_height(d, items, col_w, size) > avail:
+            size -= 2
+    f = sans(size, 400)
+    f_a = sans(size, 800)
+    lh = int(size * 1.28)
+    for item in items:
+        lines = rich_wrap(d, item, f, col_w - 34)
+        h = len(lines) * lh
+        d.rectangle((STORY_PAD, y + 6, STORY_PAD + 5, y + min(h, lh) - 6), fill=STORY_ACCENT)
+        yy = y
+        space = measure(d, " ", f)
+        for line in lines:
+            x = STORY_PAD + 34
+            for word, accent in line:
+                x = write(d, (x, yy), word, f_a if accent else f,
+                          STORY_ACCENT if accent else ON_DARK)
+                x += space
+            yy += lh
+        y = yy + 22
+    return y
+
+
+def story_kicker(img, d, text, bottom, col_w, size=48):
+    """Pay-off line pinned above the bottom edge, with a rule above it."""
+    f, lines = fit_display(d, text, col_w, 4, size, 30)
+    lh = int(f.size * 1.16)
+    y = bottom - len(lines) * lh
+    hairline(img, (STORY_PAD, y - 30, STORY_PAD + col_w, y - 28), STORY_ACCENT + (200,))
+    rich_draw(d, (STORY_PAD, y), lines, f, ON_DARK, STORY_ACCENT, lh)
+    return y - 30
+
+
+def story_photo(image_name, height, brighten=1.02):
+    """Photo cropped to a band, lightly desaturated."""
+    path = None
+    for candidate in (os.path.join(IMAGE_DIR, image_name) if image_name else None,
+                      image_name, asset(BG_IMAGE)):
+        if candidate and os.path.exists(candidate):
+            path = candidate
+            break
+    if not path:
+        return Image.new("RGB", (W, height), STORY_BG)
+
+    img = Image.open(path).convert("RGB")
+    ratio = max(W / img.width, height / img.height)
+    if ratio > 2:
+        w0, h0 = img.size
+        step = 1.0
+        while step < ratio:
+            step = min(step * 1.7, ratio)
+            img = img.resize((max(1, int(w0 * step)), max(1, int(h0 * step))),
+                             Image.LANCZOS)
+            img = img.filter(ImageFilter.UnsharpMask(radius=1.6, percent=70, threshold=2))
+    scale = max(W / img.width, height / img.height)
+    img = img.resize((max(W, int(img.width * scale)),
+                      max(height, int(img.height * scale))), Image.LANCZOS)
+    img = img.filter(ImageFilter.UnsharpMask(radius=1.3, percent=120, threshold=3))
+    left = (img.width - W) // 2
+    top = (img.height - height) // 2
+    img = img.crop((left, top, left + W, top + height))
+    img = ImageEnhance.Color(img).enhance(0.46)
+    img = ImageEnhance.Brightness(img).enhance(brighten)
+    return ImageEnhance.Contrast(img).enhance(1.06)
+
+
+def story_canvas(image_name, band_h):
+    """Photo band across the top, flat panel below, amber seam between."""
+    img = Image.new("RGBA", (W, H), STORY_BG + (255,))
+    band = story_photo(image_name, band_h).convert("RGBA")
+
+    # fade the bottom of the band into the panel so the seam isn't a hard cut
+    fade = 150
+    ys = np.arange(band_h)[:, None]
+    alpha = np.clip((ys - (band_h - fade)) / fade, 0, 1) ** 1.2
+    arr = np.asarray(band.convert("RGB")).astype(np.float32)
+    ink = np.array(STORY_BG, dtype=np.float32)
+    arr = arr * (1 - alpha[..., None]) + ink * alpha[..., None]
+    img.paste(Image.fromarray(arr.astype(np.uint8)), (0, 0))
+
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, band_h - 4, W, band_h - 1), fill=STORY_ACCENT)
+    return grain(img, 12)
+
+
+def story_tag(img, d, index, total):
+    """Amber chip with the slide number, sitting on the photo."""
+    f = sans(25, 800)
+    label = f"{index:02d} / {total:02d}"
+    w = measure(d, label, f) + 36
+    d.rectangle((STORY_PAD, STORY_PAD, STORY_PAD + w, STORY_PAD + 48), fill=STORY_ACCENT)
+    write(d, (STORY_PAD + 18, STORY_PAD + 11), label, f, (18, 14, 10))
+
+
+def dashes_height(d, items, size):
+    col_w = W - 2 * STORY_PAD - 44
+    f = sans(size, 400)
+    return sum(len(rich_wrap(d, it, f, col_w)) * int(size * 1.32) + 20 for it in items)
+
+
+def dashes_size(d, items, avail, size=31):
+    while size > 20 and dashes_height(d, items, size) > avail:
+        size -= 1
+    return size
+
+
+def story_dashes(d, y, items, size=31):
+    """Bullets marked with a short amber dash rather than a vertical tick."""
+    col_w = W - 2 * STORY_PAD - 44
+    f = sans(size, 400)
+    f_a = sans(size, 600)
+    lh = int(size * 1.32)
+    space = measure(d, " ", f)
+    for item in items:
+        d.rectangle((STORY_PAD, y + int(lh * 0.45), STORY_PAD + 24,
+                     y + int(lh * 0.45) + 3), fill=STORY_ACCENT)
+        yy = y
+        for line in rich_wrap(d, item, f, col_w):
+            x = STORY_PAD + 44
+            for word, accent in line:
+                x = write(d, (x, yy), word, f_a if accent else f,
+                          STORY_ACCENT if accent else (238, 236, 234))
+                x += space
+            yy += lh
+        y = yy + 20
+    return y
+
+
+def story_block(img, d, text, bottom, size=42):
+    """Pay-off line as a filled amber block with dark type."""
+    inner = W - 2 * STORY_PAD - 56
+    f, lines = fit_display(d, text, inner, 4, size, 28)
+    lh = int(f.size * 1.16)
+    box_h = len(lines) * lh + 52
+    top = bottom - box_h
+    d.rectangle((STORY_PAD, top, W - STORY_PAD, bottom), fill=STORY_ACCENT)
+    rich_draw(d, (STORY_PAD + 28, top + 24), lines, f, (18, 14, 10), (250, 246, 240), lh)
+    return top
+
+
+def render_story_cover(s, index, total):
+    band_h = 760
+    img = story_canvas(s.get("image"), band_h)
+    d = ImageDraw.Draw(img)
+    col_w = W - 2 * STORY_PAD
+
+    eb = s.get("eyebrow", "")
+    if eb:
+        f_eb = sans(26, 800)
+        w = measure(d, eb.upper(), f_eb, 26 * 0.12) + 36
+        d.rectangle((STORY_PAD, STORY_PAD, STORY_PAD + w, STORY_PAD + 50),
+                    fill=STORY_ACCENT)
+        write(d, (STORY_PAD + 18, STORY_PAD + 12), eb.upper(), f_eb, (18, 14, 10),
+              tracking=26 * 0.12)
+
+    bottom = H - STORY_PAD
+    note = s.get("note", "")
+    if note:
+        f_note = sans(30, 400)
+        lines = [l for chunk in note.split("|")
+                 for l in wrap(d, chunk.strip(), f_note, col_w)]
+        bottom -= len(lines) * 42
+        yy = bottom
+        for line in lines:
+            write(d, (STORY_PAD, yy), line, f_note, (214, 211, 208))
+            yy += 42
+        bottom -= 30
+
+    meta = s.get("meta", "")
+    if meta:
+        f_meta = sans(27, 800)
+        bottom -= 38
+        write(d, (STORY_PAD, bottom), meta.upper(), f_meta, STORY_ACCENT,
+              tracking=27 * 0.10)
+        bottom -= 26
+
+    f, lines = fit_display(d, s.get("title", ""), col_w, 4, 104, 56)
+    lh = int(f.size * 1.14)
+    rich_draw(d, (STORY_PAD, bottom - len(lines) * lh), lines, f,
+              ON_DARK, STORY_ACCENT, lh)
+    return img
+
+
+def story_body(s, index, total, sign=None):
+    # the photo band gives way when a slide carries a lot of copy
+    scratch = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    col_w = W - 2 * STORY_PAD
+    f_t, l_t = fit_display(scratch, s.get("title", ""), col_w, 3, 76, 44)
+    need = len(l_t) * int(f_t.size * 1.14)
+    if s.get("lead"):
+        need += 22 + para_h(scratch, s.get("lead"), sans(31, 400), col_w, int(31 * 1.38))
+    if s.all_items():
+        need += 40 + dashes_height(scratch, s.all_items(), 28)
+
+    reserved = 44
+    if sign:
+        reserved += len([p for p in sign.split("|") if p.strip()]) * 38 + 30
+    if s.get("kicker"):
+        _, l_k = fit_display(scratch, s.get("kicker"), W - 2 * STORY_PAD - 56, 4, 42, 28)
+        reserved += len(l_k) * int(42 * 1.16) + 52 + 44
+
+    band_h = int(min(520, max(330, H - STORY_PAD - reserved - need - 54)))
+    img = story_canvas(s.get("image"), band_h)
+    d = ImageDraw.Draw(img)
+    story_tag(img, d, index, total)
+
+    top = band_h + 54
+    f, lines = fit_display(d, s.get("title", ""), col_w, 3, 76, 44)
+    title_h = len(lines) * int(f.size * 1.14)
+
+    lead = s.get("lead", "")
+    f_lead = sans(31, 400)
+    lead_h = para_h(d, lead, f_lead, col_w, int(31 * 1.38)) if lead else 0
+
+    bottom = H - STORY_PAD
+    if sign:
+        f_s = sans(27, 400)
+        parts = [p.strip() for p in sign.split("|") if p.strip()]
+        bottom -= len(parts) * 38
+        yy = bottom
+        for p in parts:
+            write(d, (STORY_PAD, yy), p, f_s, (170, 167, 164))
+            yy += 38
+        bottom -= 30
+
+    kicker = s.get("kicker", "")
+    if kicker:
+        bottom = story_block(img, d, kicker, bottom) - 44
+
+    items = s.all_items()
+    gap = 40
+    block_h = title_h + (22 + lead_h if lead else 0)
+    size = 31
+    if items:
+        gap = 40 if bottom - top - block_h > 420 else 26
+        size = dashes_size(d, items, bottom - top - block_h - gap)
+        block_h += gap + dashes_height(d, items, size)
+
+    # centre the text group in the space between the photo and the kicker
+    y = top + max(0, (bottom - top - block_h) // 2)
+    y = rich_draw(d, (STORY_PAD, y), lines, f, ON_DARK, STORY_ACCENT,
+                  int(f.size * 1.14))
+    if lead:
+        y += 22
+        y = para(d, (STORY_PAD, y), lead, f_lead, (206, 203, 200),
+                 col_w, int(31 * 1.38))
+    if items:
+        story_dashes(d, y + gap, items, size)
+    return img
+
+
+def render_story(s, index, total):
+    return story_body(s, index, total)
+
+
+def render_story_outro(s, index, total):
+    return story_body(s, index, total, sign=s.get("sign", ""))
+
+
+SOLID = {"cover": render_cover, "list": render_list, "stat": render_stat,
+         "compare": render_compare, "table": render_table, "outro": render_outro}
+
+STORY = {"cover": render_story_cover, "story": render_story,
+         "outro": render_story_outro}
+
+STYLES = {"solid": SOLID, "story": STORY}
 
 
 # ---------------------------------------------------------------- parsing
@@ -516,7 +935,7 @@ class Slide:
         return [t for _, t in self.items]
 
 
-def parse(raw):
+def parse(raw, style="solid"):
     slides = []
     for block in raw.split("///"):
         lines = [l.strip() for l in block.strip().split("\n") if l.strip()]
@@ -525,8 +944,9 @@ def parse(raw):
         if not (lines[0].startswith("[") and lines[0].endswith("]")):
             sys.exit(f"Slide must start with a layout tag, got: {lines[0]!r}")
         layout = lines.pop(0)[1:-1].strip().lower()
-        if layout not in LAYOUTS:
-            sys.exit(f"Unknown layout [{layout}] — use one of {', '.join(LAYOUTS)}")
+        if layout not in STYLES[style]:
+            sys.exit(f"Unknown layout [{layout}] for style '{style}' — "
+                     f"use one of {', '.join(STYLES[style])}")
 
         s = Slide(layout)
         current = None
@@ -552,14 +972,16 @@ def main():
     ap.add_argument("--no-png", action="store_true")
     ap.add_argument("--no-outro", action="store_true",
                     help="don't append the standard closing slide")
+    ap.add_argument("--style", choices=sorted(STYLES), default="solid",
+                    help="solid = reference layouts, story = case-study layouts")
     args = ap.parse_args()
 
     with open(args.script, encoding="utf-8") as fh:
-        slides = parse(fh.read())
+        slides = parse(fh.read(), args.style)
     if not slides:
         sys.exit("No slides found — check the /// separators.")
 
-    if not args.no_outro and slides[-1].layout != "outro":
+    if args.style == "solid" and not args.no_outro and slides[-1].layout != "outro":
         slides.append(Slide("outro"))
 
     total = len(slides)
@@ -568,7 +990,7 @@ def main():
 
     images = []
     for i, s in enumerate(slides, start=1):
-        images.append(LAYOUTS[s.layout](s, i, total).convert("RGB"))
+        images.append(STYLES[args.style][s.layout](s, i, total).convert("RGB"))
 
     pdf = f"{args.out}.pdf"
     images[0].save(pdf, save_all=True, append_images=images[1:], resolution=150.0)
