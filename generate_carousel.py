@@ -78,7 +78,7 @@ STORY_BG = (12, 12, 12)
 STORY_PAD = 64
 IMAGE_DIR = "images"
 STORY_BRAND = "SOLID SAFETY"
-STORY_ACCENT = (214, 140, 45)   # muted amber, story style only
+STORY_ACCENT = (183, 110, 25)   # muted amber, story style only
 
 _font_cache = {}
 
